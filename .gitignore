@@ -1,0 +1,22 @@
+# data & artifacts
+data/raw/
+data/processed/
+*.ckpt
+*.pt
+*.safetensors
+*.gguf
+*.onnx
+checkpoints/
+wandb/
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+build/
+# training outputs
+outputs/
+# env
+.env

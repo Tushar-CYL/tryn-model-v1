@@ -1,0 +1,41 @@
+# Phase 1 — tiny alignment run: freeze encoder + decoder, train the connector only.
+# Everything is randomly-initialised and CPU-sized (no downloads).
+defaults:
+  - base
+  - _self_
+
+experiment: align_tiny
+
+image:
+  image_size: 32
+  patch_size: 8 # -> (32/8)^2 = 16 patch tokens
+  in_channels: 3
+
+encoder:
+  d_model: 64
+  depth: 2
+  n_heads: 4
+  mlp_ratio: 2.0
+
+decoder:
+  d_model: 64
+  depth: 2
+  n_heads: 4
+  mlp_ratio: 2.0
+  max_seq_len: 128
+
+connector:
+  hidden_dim: 128 # MLP projector encoder.d_model -> decoder.d_model
+
+data:
+  n_samples: 128
+  n_classes: 8 # number of distinct synthetic "scenes" / captions
+  caption_len: 6
+  batch_size: 16
+
+optim:
+  lr: 3.0e-3
+  steps: 300
+
+tracking:
+  run_name: align-tiny

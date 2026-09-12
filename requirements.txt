@@ -1,0 +1,25 @@
+# Core (Phase 0-2). Pin versions when environment is chosen.
+torch
+torchvision
+torchaudio
+transformers
+datasets
+accelerate
+peft
+huggingface_hub
+webdataset
+pyarrow
+duckdb
+wandb
+hydra-core
+pyyaml
+einops
+pillow
+numpy
+# serving
+fastapi
+uvicorn
+# testing
+pytest
+# export / edge (add as needed)
+# onnx, onnxruntime, optimum

@@ -1,0 +1,20 @@
+# Base Hydra config shared by all experiments.
+# Compose specific experiments on top (e.g. `toy.yaml`, `align_tiny.yaml`).
+
+seed: 0
+device: cpu # "cpu" | "cuda" | "auto"
+
+# Where checkpoints and logs are written (relative to repo root).
+output_dir: outputs
+
+# Experiment tracking. Defaults are network-free so tests / laptop runs never
+# block on a W&B login. Set mode: online (and log in) on the GPU box.
+tracking:
+  backend: wandb # "wandb" | "none"
+  mode: disabled # "online" | "offline" | "disabled"
+  project: perception-slm
+  entity: null
+  run_name: null
+
+logging:
+  level: INFO

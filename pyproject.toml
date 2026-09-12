@@ -1,0 +1,30 @@
+[project]
+name = "perception-slm"
+version = "0.0.1"
+description = "Small, from-scratch multimodal understanding models (image / video / audio)."
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Dependencies are managed via requirements.txt for now (see that file).
+# Pin here once the environment is frozen.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# Make `src/` importable (import common, image_model, training, eval, ...)
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

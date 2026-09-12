@@ -1,0 +1,22 @@
+# Phase 0 · Day 4 — toy MLP training loop on random tensors.
+defaults:
+  - base
+  - _self_
+
+experiment: toy_mlp
+
+model:
+  in_dim: 32
+  hidden_dim: 64
+  out_dim: 8
+
+data:
+  n_samples: 512
+  batch_size: 32
+
+optim:
+  lr: 1.0e-3
+  steps: 200
+
+tracking:
+  run_name: toy-mlp
