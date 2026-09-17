@@ -41,7 +41,8 @@ def vqa_accuracy(
     """Evaluate a VQA dataset ({images, questions, answers, tokenizer})."""
     model.eval()
     tok: TinyTokenizer = dataset["tokenizer"]
-    images = dataset["images"]
+    device = next(model.parameters()).device
+    images = dataset["images"].to(device)
     questions = dataset["questions"]
     answers = dataset["answers"]
 

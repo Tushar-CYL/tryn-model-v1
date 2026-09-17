@@ -47,11 +47,13 @@ def evaluate(
     """Evaluate `model` on `dataset` ({images, text_ids, tokenizer})."""
     model.eval()
     tok: TinyTokenizer = dataset["tokenizer"]
+    device = next(model.parameters()).device
 
     total_loss, total_tok_correct, total_tok = 0.0, 0.0, 0
     n_batches = 0
     for batch in iter_batches(dataset, batch_size, shuffle=False):
-        images, text_ids = batch["images"], batch["text_ids"]
+        images = batch["images"].to(device)
+        text_ids = batch["text_ids"].to(device)
         logits = model.forward(images, text_ids)
         labels = model.build_labels(text_ids)
         total_loss += float(lm_loss(logits, labels))
@@ -65,7 +67,7 @@ def evaluate(
         total_tok += int(mask.sum())
 
     # exact-match via greedy generation over the whole set
-    preds = generate(model, dataset["images"], max_new_tokens=max_new_tokens)
+    preds = generate(model, dataset["images"].to(device), max_new_tokens=max_new_tokens)
     em = exact_match(preds, dataset["text_ids"])
 
     samples = []
