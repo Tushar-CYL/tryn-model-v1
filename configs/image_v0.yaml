@@ -1,0 +1,64 @@
+# Phase 2 — Image model v0 (full assembled model).
+# Default is the offline/CPU build (tiny encoder + resampler) so tests and the
+# overfit-one-batch sanity check need no downloads. Flip `encoder.type: siglip`
+# on a box with network/GPU to use the open SigLIP init (Week 4, Day 1).
+defaults:
+  - base
+  - _self_
+
+experiment: image_v0
+
+image:
+  image_size: 32
+  patch_size: 8
+  in_channels: 3
+
+encoder:
+  type: tiny            # "tiny" (offline) | "siglip" (open init, downloads)
+  # -- tiny fields --
+  image_size: 32
+  patch_size: 8
+  in_channels: 3
+  d_model: 64
+  depth: 2
+  n_heads: 4
+  mlp_ratio: 2.0
+  # -- siglip fields (used when type: siglip) --
+  model_name: google/siglip-base-patch16-224
+  freeze: true
+
+connector:
+  type: resampler       # "mlp" | "resampler"
+  num_latents: 16       # fixed vision-token budget (resampler only)
+  n_heads: 4
+  depth: 1
+  hidden_dim: 128       # mlp only
+
+decoder:
+  d_model: 64
+  depth: 2
+  n_heads: 4
+  mlp_ratio: 2.0
+  max_seq_len: 128
+
+data:
+  shards_dir: data/processed/coco_v0   # produced by `python -m data_pipeline.build`
+  n_samples: 128       # synthetic fallback size when shards are absent
+  n_classes: 8
+  batch_size: 16
+
+optim:
+  lr: 3.0e-3
+  steps: 300
+
+eval:
+  every: 100            # run held-out eval every N steps (0 = off)
+  batch_size: 16
+  select_by: token_acc  # "token_acc" (higher better) | "loss" (lower better)
+
+checkpoint:
+  dir: outputs/image_v0
+  resume: null          # path to a .pt to resume from (optimizer + step restored)
+
+tracking:
+  run_name: image-v0

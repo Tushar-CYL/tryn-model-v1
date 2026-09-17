@@ -1,0 +1,56 @@
+# Phase 2 — Stage 3: instruction / VQA tuning with LoRA (Week 6).
+# Connector + decoder LoRA adapters train on (image, question, answer) turns;
+# encoder + decoder base weights stay frozen. Offline synthetic VQA by default.
+defaults:
+  - base
+  - _self_
+
+experiment: image_instruct
+
+image:
+  image_size: 32
+  patch_size: 8
+  in_channels: 3
+
+encoder:
+  type: tiny
+  image_size: 32
+  patch_size: 8
+  d_model: 64
+  depth: 2
+  n_heads: 4
+
+connector:
+  type: resampler
+  num_latents: 16
+  n_heads: 4
+  depth: 1
+
+decoder:
+  d_model: 64
+  depth: 2
+  n_heads: 4
+  mlp_ratio: 2.0
+  max_seq_len: 128
+
+lora:
+  r: 4
+  alpha: 8
+  dropout: 0.0
+  targets: [mlp, lm_head]
+
+data:
+  n_samples: 256
+  batch_size: 32
+
+optim:
+  lr: 3.0e-3
+  steps: 400
+
+init_from: null          # optional alignment checkpoint to warm-start the connector
+
+checkpoint:
+  dir: outputs/image_instruct
+
+tracking:
+  run_name: image-instruct

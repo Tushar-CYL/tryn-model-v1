@@ -1,0 +1,57 @@
+# Phase 2 — Image v0, GPU/real-scale alignment (Kaggle free T4).
+# Open SigLIP encoder (frozen) + a resampler + a from-scratch decoder, trained
+# on real COCO shards. Small enough for a 16 GB T4; scale steps/data as budget allows.
+defaults:
+  - base
+  - _self_
+
+experiment: image_v0_gpu
+
+device: auto            # -> cuda on the GPU box, cpu otherwise
+
+image:
+  image_size: 224       # SigLIP's expected input
+  patch_size: 16
+  in_channels: 3
+
+encoder:
+  type: siglip
+  model_name: google/siglip-base-patch16-224   # 196 patch tokens, d=768
+  freeze: true
+
+connector:
+  type: resampler
+  num_latents: 32       # vision-token budget fed to the decoder
+  n_heads: 8
+  depth: 2
+
+decoder:                # from-scratch SLM (bigger than the CPU toy, still small)
+  d_model: 256
+  depth: 4
+  n_heads: 8
+  mlp_ratio: 4.0
+  max_seq_len: 128
+
+data:
+  shards_dir: data/processed/coco_v0
+  n_samples: 512        # synthetic fallback only
+  n_classes: 8
+  batch_size: 32
+
+optim:
+  lr: 1.0e-3
+  steps: 2000
+
+eval:
+  every: 250
+  batch_size: 32
+  select_by: token_acc
+
+checkpoint:
+  dir: outputs/image_v0_gpu
+  resume: null
+
+tracking:
+  backend: wandb
+  mode: disabled        # set to "online" in the notebook after wandb.login()
+  run_name: image-v0-gpu

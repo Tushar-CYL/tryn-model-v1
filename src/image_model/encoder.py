@@ -77,3 +77,70 @@ class TinyPatchEncoder(nn.Module):
         for blk in self.blocks:
             x = blk(x)
         return self.ln_f(x)
+
+
+class SiglipVisionEncoder(nn.Module):
+    """Open SigLIP vision tower (Week 4, Day 1 — recommended v0 init).
+
+    Wraps `transformers.SiglipVisionModel`. Same interface as
+    `TinyPatchEncoder`: images (B, C, H, W) -> (B, num_patches, d_model), plus
+    `.d_model` / `.num_patches`. Weights are downloaded once from the Hub;
+    `transformers` is imported lazily so the offline path never needs it.
+
+    Kept frozen by default (v0 trains the connector, not the encoder).
+    """
+
+    def __init__(
+        self,
+        model_name: str = "google/siglip-base-patch16-224",
+        freeze: bool = True,
+    ) -> None:
+        super().__init__()
+        from transformers import SiglipVisionModel  # lazy: only for real init
+
+        self.model = SiglipVisionModel.from_pretrained(model_name)
+        self.model_name = model_name
+        if freeze:
+            for p in self.model.parameters():
+                p.requires_grad_(False)
+            self.model.eval()
+
+    @property
+    def d_model(self) -> int:
+        return self.model.config.hidden_size
+
+    @property
+    def num_patches(self) -> int:
+        side = self.model.config.image_size // self.model.config.patch_size
+        return side * side
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        out = self.model(pixel_values=images)
+        return out.last_hidden_state  # (B, num_patches, hidden_size)
+
+
+def build_encoder(cfg):
+    """Factory: build the encoder named by `cfg.type` ('tiny' | 'siglip').
+
+    `cfg` is a mapping/DictConfig. For 'tiny' it needs the EncoderConfig fields;
+    for 'siglip' it may carry `model_name` and `freeze`.
+    """
+    kind = cfg.get("type", "tiny")
+    if kind == "tiny":
+        return TinyPatchEncoder(
+            EncoderConfig(
+                image_size=cfg.get("image_size", 32),
+                patch_size=cfg.get("patch_size", 8),
+                in_channels=cfg.get("in_channels", 3),
+                d_model=cfg.get("d_model", 64),
+                depth=cfg.get("depth", 2),
+                n_heads=cfg.get("n_heads", 4),
+                mlp_ratio=cfg.get("mlp_ratio", 2.0),
+            )
+        )
+    if kind == "siglip":
+        return SiglipVisionEncoder(
+            model_name=cfg.get("model_name", "google/siglip-base-patch16-224"),
+            freeze=cfg.get("freeze", True),
+        )
+    raise ValueError(f"Unknown encoder type: {kind!r}")
