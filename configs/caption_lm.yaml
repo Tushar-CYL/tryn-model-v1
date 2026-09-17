@@ -1,0 +1,54 @@
+# Phase 2 (proper) — captioning with a PRETRAINED LM decoder + LoRA.
+# Frozen SigLIP + trained connector + pretrained SmolLM2 (LoRA). Fits a free T4.
+defaults:
+  - base
+  - _self_
+
+experiment: caption_lm
+
+device: auto
+
+image:
+  image_size: 224
+
+encoder:
+  type: siglip
+  model_name: google/siglip-base-patch16-224
+  freeze: true
+
+connector:
+  type: resampler
+  num_latents: 32        # vision-token budget prepended to the LM
+  n_heads: 8
+  depth: 2
+
+lm:
+  model_name: HuggingFaceTB/SmolLM2-135M   # or -360M for stronger captions
+  freeze_base: true
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  targets: [q_proj, k_proj, v_proj, o_proj]
+
+data:
+  shards_dir: data/processed/coco_train
+  batch_size: 8
+  max_len: 48
+
+optim:
+  lr: 2.0e-4
+  steps: 1500
+
+eval:
+  every: 300
+  n_samples: 6
+
+checkpoint:
+  dir: outputs/caption_lm
+
+tracking:
+  backend: wandb
+  mode: disabled
+  run_name: caption-lm
