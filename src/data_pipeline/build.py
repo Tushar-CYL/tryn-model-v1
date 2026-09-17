@@ -44,7 +44,12 @@ def build(
 
     log.info("streaming '%s' (limit=%s) -> cleaning -> splitting -> sharding", dataset, limit)
     raw = iter_source(dataset, limit=limit, seed=seed, inject_bad=inject_bad)
-    kept_iter, stats = clean(raw, clean_cfg)
+    clip_scorer = None
+    if clean_cfg.clip_min_score is not None:
+        from .clip_filter import build_clip_scorer
+        log.info("CLIP-score filter on (min=%.3f)", clean_cfg.clip_min_score)
+        clip_scorer = build_clip_scorer()
+    kept_iter, stats = clean(raw, clean_cfg, clip_scorer=clip_scorer)
 
     # Route each surviving record to its split, sharding the three streams.
     buckets: dict[str, list] = {"train": [], "val": [], "golden": []}
@@ -114,6 +119,8 @@ def main() -> None:
     p.add_argument("--maxcount", type=int, default=256, help="samples per shard")
     p.add_argument("--inject-bad", action="store_true",
                    help="synthetic only: add dirty records to exercise cleaning")
+    p.add_argument("--clip-min-score", type=float, default=None,
+                   help="drop image/caption pairs below this CLIP cosine sim (downloads CLIP)")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
@@ -122,6 +129,7 @@ def main() -> None:
         args.dataset,
         args.out,
         limit=args.limit,
+        clean_cfg=CleanConfig(clip_min_score=args.clip_min_score),
         shard_cfg=ShardWriterConfig(maxcount=args.maxcount),
         inject_bad=args.inject_bad,
         seed=args.seed,

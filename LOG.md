@@ -142,6 +142,29 @@ verified against real COCO data and real SigLIP weights.
 **✅ PHASE 2 GATE MET:** image model runs offline on a laptop and beats a baseline on the
 held-out set. **45/45 tests green.** See `RESULTS.md`.
 
+## Phase 2 — Quality/reliability pass + real captioner ✅
+
+The from-scratch `TinyDecoder` can't produce fluent captions at free-tier scale (collapses
+to repeated tokens). Added the **proper small-VLM recipe** and hardened the whole path:
+
+- ✅ **Real captioner** (`image_model/vlm_lm.py`): frozen SigLIP → connector (from scratch) →
+  pretrained **SmolLM2** + our own LoRA (`common/lora.py`, no `peft`). `caption_data.py`
+  tokenizes with the LM's subword tokenizer. See `ARCHITECTURE.md`.
+- ✅ **Training quality** (`training/caption_lm.py` + `common/optim.py`): AdamW + weight
+  decay, warmup+cosine LR, grad clipping, gradient accumulation, fp16 AMP on CUDA.
+- ✅ **Eval**: held-out loss + BLEU-4 (`eval/caption_metrics.py`) with best-checkpoint select.
+- ✅ **Reliability**: single device/dtype path (LM forced fp32; explicit device to eval),
+  `load_partial` warm-start, small trainable-only checkpoints, clean inference API
+  (`LMImageVLM.load_trained`) + `scripts/caption.py`.
+- ✅ **Data**: opt-in CLIP-score filter (`data_pipeline/clip_filter.py`, `--clip-min-score`).
+- ✅ **Reproducibility**: `ARCHITECTURE.md`, README captioner section, Kaggle notebook
+  `notebooks/train_caption_kaggle.ipynb`, HF push via `scripts/push_to_hf.py`.
+- 🧪 Offline tests (no downloads): `test_optim`, `test_caption_metrics`, `test_caption_data`,
+  `test_vlm_lm_offline` (tiny random Llama). **55/55 green** (+1 skipped LM download test).
+
+Trained on Kaggle T4 and pushed to `LNTTushar/perception-slm-image-v0`. Caption quality
+scales with steps + data + `SmolLM2-360M` (see notebook).
+
 **Next (Phase 3, Audio — or scale Image on GPU):** the whole stack (data pipeline, model,
 alignment, LoRA, eval, quantization, serving) is CPU-verified and scale-ready. Flip
 `encoder.type: siglip`, point at a larger pull, set `tracking.mode: online`, run Weeks 5–6

@@ -5,7 +5,7 @@ torchaudio
 transformers
 datasets
 accelerate
-peft
+# LoRA is implemented in-repo (src/common/lora.py) — no peft dependency.
 huggingface_hub
 webdataset
 pyarrow

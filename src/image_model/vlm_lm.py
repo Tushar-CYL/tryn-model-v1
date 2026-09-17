@@ -107,3 +107,48 @@ class LMImageVLM(nn.Module):
 
     def trainable_parameters(self):
         return [p for p in self.parameters() if p.requires_grad]
+
+    # -- persistence --------------------------------------------------------------
+    def save_trainable(self, path, config: dict, **extra):
+        """Save only the trainable tensors (connector + LoRA) + the build config.
+
+        The frozen SigLIP + SmolLM2 are NOT saved (they re-download from HF), so
+        the checkpoint is a few MB instead of ~1 GB.
+        """
+        from pathlib import Path
+
+        import torch as _t
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        state = {n: p.detach().cpu() for n, p in self.named_parameters() if p.requires_grad}
+        _t.save({"trainable_state": state, "config": config, **extra}, path)
+        return path
+
+    @classmethod
+    def load_trained(cls, path, device="cpu") -> "LMImageVLM":
+        """Rebuild from a saved checkpoint's config and load its trainable weights."""
+        import torch as _t
+        payload = _t.load(path, map_location="cpu", weights_only=False)
+        cfg = payload["config"]
+        model = build_lm_vlm(cfg)
+        missing, unexpected = model.load_state_dict(payload["trainable_state"], strict=False)
+        # `missing` is expected (frozen base weights aren't in the trainable_state).
+        model.to(device).eval()
+        return model
+
+
+def build_lm_vlm(cfg: dict):
+    """The single build path used by both training and inference:
+    SigLIP + connector + pretrained LM, with LoRA applied to the LM."""
+    from common.lora import apply_lora
+
+    model = LMImageVLM.from_pretrained(cfg)
+    lcfg = cfg.get("lora", {})
+    apply_lora(
+        model.lm,
+        r=lcfg.get("r", 16),
+        alpha=lcfg.get("alpha", 32),
+        targets=tuple(lcfg.get("targets", ("q_proj", "k_proj", "v_proj", "o_proj"))),
+        dropout=lcfg.get("dropout", 0.0),
+    )
+    return model

@@ -1,13 +1,15 @@
 """Phase 2 (proper) — caption training with a pretrained LM decoder + LoRA.
 
-Frozen SigLIP + trained connector + pretrained SmolLM2 (LoRA). Trains on real
-COCO caption shards, evaluates by generating captions on held-out images, and
-saves only the small trainable state (connector + LoRA adapters).
+Frozen SigLIP + trained connector + pretrained SmolLM2 (LoRA). Production-grade
+training loop: AdamW + weight decay, warmup+cosine LR, gradient clipping,
+gradient accumulation, optional mixed precision (fp16 on CUDA), held-out loss +
+BLEU-4, and small trainable-only checkpoints.
 
     python -m training.caption_lm            # uses configs/caption_lm.yaml
 """
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import torch
@@ -15,45 +17,38 @@ from omegaconf import DictConfig, OmegaConf
 
 from common.config import load_config
 from common.logging_utils import get_logger, setup_logging
+from common.optim import build_optimizer, cosine_warmup, set_lr
 from common.seed import resolve_device, set_seed
 from common.tracking import init_tracking
+from eval.caption_metrics import corpus_bleu4
 from image_model.caption_data import iter_caption_batches, load_caption_dataset
-from image_model.vlm_lm import LMImageVLM
+from image_model.vlm_lm import build_lm_vlm
 
 log = get_logger(__name__)
 
 
-def build_model(cfg: DictConfig) -> LMImageVLM:
-    mcfg = OmegaConf.to_container(cfg, resolve=True)
-    model = LMImageVLM.from_pretrained(mcfg)
-    from peft import LoraConfig, get_peft_model
-
-    lora = LoraConfig(
-        r=cfg.lora.r, lora_alpha=cfg.lora.alpha, lora_dropout=cfg.lora.dropout,
-        target_modules=list(cfg.lora.targets), task_type="CAUSAL_LM", bias="none",
-    )
-    model.lm = get_peft_model(model.lm, lora)
-    return model
-
-
-def _save_trainable(path: Path, model: LMImageVLM, **extra) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    state = {n: p.detach().cpu() for n, p in model.named_parameters() if p.requires_grad}
-    torch.save({"trainable_state": state, **extra}, path)
-    return path
+def _amp_ctx(device: torch.device, mode: str):
+    """autocast context for training; no-op on CPU or when disabled."""
+    if mode == "none" or device.type != "cuda":
+        return contextlib.nullcontext()
+    dtype = torch.bfloat16 if mode == "bf16" else torch.float16
+    return torch.autocast(device_type="cuda", dtype=dtype)
 
 
 @torch.no_grad()
-def _eval(model, ds, device, batch_size, n_samples):
+def _evaluate(model, ds, device, batch_size, n_samples):
     model.eval()
     total, nb = 0.0, 0
     for batch in iter_caption_batches(ds, batch_size, shuffle=False):
         total += float(model.loss(batch["images"].to(device), batch["input_ids"].to(device),
                                   batch["attention_mask"].to(device), batch["labels"].to(device)))
         nb += 1
-    caps = model.generate_caption(ds["images"][:n_samples].to(device))
-    samples = [{"target": ds["captions"][i], "generated": caps[i]} for i in range(len(caps))]
-    return {"loss": round(total / max(nb, 1), 4)}, samples
+    # BLEU over a capped subset (generation is the slow part)
+    k = min(len(ds["captions"]), max(n_samples, 64))
+    gen = model.generate_caption(ds["images"][:k].to(device))
+    bleu = corpus_bleu4(gen, ds["captions"][:k])
+    samples = [{"target": ds["captions"][i], "generated": gen[i]} for i in range(min(n_samples, k))]
+    return {"loss": round(total / max(nb, 1), 4), "bleu4": bleu}, samples
 
 
 def run_caption_lm(cfg: DictConfig) -> dict:
@@ -62,55 +57,86 @@ def run_caption_lm(cfg: DictConfig) -> dict:
     device = resolve_device(cfg.device)
     run = init_tracking(cfg)
 
-    model = build_model(cfg).to(device)
+    model = build_lm_vlm(OmegaConf.to_container(cfg, resolve=True)).to(device)
     tok = model.tokenizer
     train_ds = load_caption_dataset(cfg.data.shards_dir, tok, image_size=cfg.image.image_size,
                                     split="train", max_len=cfg.data.max_len)
     val_ds = load_caption_dataset(cfg.data.shards_dir, tok, image_size=cfg.image.image_size,
                                   split="val", max_len=cfg.data.max_len)
 
-    params = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.AdamW(params, lr=cfg.optim.lr)
-    n_train = sum(p.numel() for p in params)
+    opt = build_optimizer(model, lr=cfg.optim.lr, weight_decay=cfg.optim.get("weight_decay", 0.01))
+    total_steps = cfg.optim.steps
+    lr_fn = cosine_warmup(total_steps, warmup_steps=cfg.optim.get("warmup", int(0.05 * total_steps)))
+    accum = max(1, cfg.optim.get("accum_steps", 1))
+    clip = cfg.optim.get("grad_clip", 1.0)
+    amp_mode = cfg.optim.get("amp", "fp16")
+    scaler = torch.amp.GradScaler("cuda", enabled=(amp_mode == "fp16" and device.type == "cuda"))
+
+    n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
     n_total = sum(p.numel() for p in model.parameters())
-    log.info("vision tokens: %d | trainable (connector+LoRA): %d / %d",
-             model.num_vision_tokens, n_train, n_total)
+    log.info("vision tokens: %d | trainable (connector+LoRA): %d / %d | device %s | amp %s",
+             model.num_vision_tokens, n_train, n_total, device, amp_mode)
 
     ckpt_dir = Path(cfg.checkpoint.dir)
+    best_bleu, best_path = -1.0, ckpt_dir / "caption_lm_best.pt"
+    cfg_container = OmegaConf.to_container(cfg, resolve=True)
     first_loss = last_loss = None
     step = 0
-    while step < cfg.optim.steps:
-        for batch in iter_caption_batches(train_ds, cfg.data.batch_size, seed=cfg.seed + step):
-            model.train()
-            opt.zero_grad()
-            loss = model.loss(batch["images"].to(device), batch["input_ids"].to(device),
-                              batch["attention_mask"].to(device), batch["labels"].to(device))
-            loss.backward()
-            opt.step()
-            last_loss = float(loss.detach())
-            first_loss = first_loss if first_loss is not None else last_loss
-            if step % 50 == 0:
-                log.info("step %d | loss %.4f", step, last_loss)
-            run.log({"train/loss": last_loss}, step=step)
-            step += 1
-            if cfg.eval.every and step % cfg.eval.every == 0:
-                metrics, samples = _eval(model, val_ds, device, cfg.data.batch_size, cfg.eval.n_samples)
-                log.info("eval @ %d | val_loss %.4f | e.g. %r -> %r",
-                         step, metrics["loss"], samples[0]["target"], samples[0]["generated"])
-                run.log({"eval/loss": metrics["loss"]}, step=step)
-            if step >= cfg.optim.steps:
-                break
+    opt.zero_grad(set_to_none=True)
 
-    metrics, samples = _eval(model, val_ds, device, cfg.data.batch_size, cfg.eval.n_samples)
-    ckpt = _save_trainable(ckpt_dir / "caption_lm.pt", model, step=step, eval=metrics,
-                           config=OmegaConf.to_container(cfg, resolve=True))
+    def _batches():
+        while True:
+            yield from iter_caption_batches(train_ds, cfg.data.batch_size, seed=cfg.seed + step)
+
+    gen = _batches()
+    while step < total_steps:
+        set_lr(opt, cfg.optim.lr * lr_fn(step))
+        micro_loss = 0.0
+        for _ in range(accum):
+            batch = next(gen)
+            model.train()
+            with _amp_ctx(device, amp_mode):
+                loss = model.loss(batch["images"].to(device), batch["input_ids"].to(device),
+                                  batch["attention_mask"].to(device), batch["labels"].to(device))
+                loss = loss / accum
+            scaler.scale(loss).backward()
+            micro_loss += float(loss.detach()) * accum
+        if clip:
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], clip)
+        scaler.step(opt)
+        scaler.update()
+        opt.zero_grad(set_to_none=True)
+
+        last_loss = micro_loss / accum
+        first_loss = first_loss if first_loss is not None else last_loss
+        if step % 50 == 0:
+            log.info("step %d | loss %.4f | lr %.2e", step, last_loss, opt.param_groups[0]["lr"])
+        run.log({"train/loss": last_loss, "train/lr": opt.param_groups[0]["lr"]}, step=step)
+
+        step += 1
+        if cfg.eval.every and step % cfg.eval.every == 0:
+            metrics, samples = _evaluate(model, val_ds, device, cfg.data.batch_size, cfg.eval.n_samples)
+            log.info("eval @ %d | val_loss %.4f | BLEU4 %.2f | e.g. %r -> %r",
+                     step, metrics["loss"], metrics["bleu4"],
+                     samples[0]["target"], samples[0]["generated"])
+            run.log({"eval/loss": metrics["loss"], "eval/bleu4": metrics["bleu4"]}, step=step)
+            if metrics["bleu4"] >= best_bleu:
+                best_bleu = metrics["bleu4"]
+                model.save_trainable(best_path, cfg_container, step=step, eval=metrics)
+
+    metrics, samples = _evaluate(model, val_ds, device, cfg.data.batch_size, cfg.eval.n_samples)
+    if metrics["bleu4"] >= best_bleu:
+        model.save_trainable(best_path, cfg_container, step=step, eval=metrics)
+    ckpt = model.save_trainable(ckpt_dir / "caption_lm.pt", cfg_container, step=step, eval=metrics)
     run.finish()
-    log.info("done | first %.4f -> last %.4f | val_loss %.4f | ckpt %s",
-             first_loss, last_loss, metrics["loss"], ckpt)
+    log.info("done | first %.4f -> last %.4f | val_loss %.4f | BLEU4 %.2f | ckpt %s | best %s",
+             first_loss, last_loss, metrics["loss"], metrics["bleu4"], ckpt, best_path)
     for s in samples:
         log.info("  target: %r | generated: %r", s["target"], s["generated"])
     return {"first_loss": first_loss, "last_loss": last_loss, "val_loss": metrics["loss"],
-            "checkpoint": str(ckpt), "samples": samples}
+            "bleu4": metrics["bleu4"], "checkpoint": str(ckpt), "best_checkpoint": str(best_path),
+            "samples": samples}
 
 
 def main() -> None:

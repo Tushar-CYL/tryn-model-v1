@@ -40,6 +40,11 @@ data:
 optim:
   lr: 2.0e-4
   steps: 1500
+  weight_decay: 0.01
+  warmup: 100          # linear warmup steps, then cosine decay
+  grad_clip: 1.0
+  accum_steps: 1       # gradient accumulation (raise for a larger effective batch)
+  amp: fp16            # "fp16" (T4) | "bf16" (Ampere+) | "none"
 
 eval:
   every: 300
