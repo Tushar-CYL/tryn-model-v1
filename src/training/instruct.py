@@ -65,8 +65,8 @@ def run_instruct(cfg: DictConfig) -> dict:
     log.info("LoRA layers: %d | trainable (connector+LoRA): %d / %d",
              n_lora_layers, n_train, n_total)
 
-    base_before = compare_to_baseline(model, val_ds)["baseline_accuracy"]
-    vqa_before = vqa_accuracy(model, val_ds).accuracy
+    base_before = compare_to_baseline(model, val_ds, device=device)["baseline_accuracy"]
+    vqa_before = vqa_accuracy(model, val_ds, device=device).accuracy
 
     first_loss = last_loss = None
     step = 0
@@ -89,7 +89,7 @@ def run_instruct(cfg: DictConfig) -> dict:
             if step >= cfg.optim.steps:
                 break
 
-    cmp = compare_to_baseline(model, val_ds)
+    cmp = compare_to_baseline(model, val_ds, device=device)
     run.log({"eval/vqa_accuracy": cmp["model_accuracy"],
              "eval/baseline_accuracy": cmp["baseline_accuracy"]}, step=step)
     ckpt = save_checkpoint(Path(cfg.checkpoint.dir) / "instruct.pt", model,

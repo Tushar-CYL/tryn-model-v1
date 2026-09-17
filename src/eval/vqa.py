@@ -37,11 +37,17 @@ def vqa_accuracy(
     dataset: dict,
     max_new_tokens: int = 12,
     n_samples: int = 4,
+    device=None,
 ) -> VQAReport:
-    """Evaluate a VQA dataset ({images, questions, answers, tokenizer})."""
+    """Evaluate a VQA dataset ({images, questions, answers, tokenizer}).
+
+    Pass `device` explicitly (from the trainer) to guarantee inputs land on the
+    model's device; falls back to inferring it from the model's parameters.
+    """
     model.eval()
     tok: TinyTokenizer = dataset["tokenizer"]
-    device = next(model.parameters()).device
+    if device is None:
+        device = next(model.parameters()).device
     images = dataset["images"].to(device)
     questions = dataset["questions"]
     answers = dataset["answers"]

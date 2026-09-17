@@ -32,9 +32,11 @@ def majority_answer_accuracy(dataset: dict) -> VQAReport:
     )
 
 
-def compare_to_baseline(model: ImageVLM, dataset: dict, max_new_tokens: int = 12) -> dict:
+def compare_to_baseline(
+    model: ImageVLM, dataset: dict, max_new_tokens: int = 12, device=None
+) -> dict:
     """Run the model + the majority baseline; report whether the model wins."""
-    model_rep = vqa_accuracy(model, dataset, max_new_tokens=max_new_tokens)
+    model_rep = vqa_accuracy(model, dataset, max_new_tokens=max_new_tokens, device=device)
     base_rep = majority_answer_accuracy(dataset)
     return {
         "model_accuracy": round(model_rep.accuracy, 4),

@@ -43,11 +43,17 @@ def evaluate(
     batch_size: int = 16,
     max_new_tokens: int = 24,
     n_samples: int = 4,
+    device=None,
 ) -> EvalReport:
-    """Evaluate `model` on `dataset` ({images, text_ids, tokenizer})."""
+    """Evaluate `model` on `dataset` ({images, text_ids, tokenizer}).
+
+    Pass `device` explicitly (e.g. from the trainer) to guarantee inputs land on
+    the model's device; falls back to inferring it from the model's parameters.
+    """
     model.eval()
     tok: TinyTokenizer = dataset["tokenizer"]
-    device = next(model.parameters()).device
+    if device is None:
+        device = next(model.parameters()).device
 
     total_loss, total_tok_correct, total_tok = 0.0, 0.0, 0
     n_batches = 0

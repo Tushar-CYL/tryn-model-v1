@@ -110,7 +110,7 @@ def run_image_v0(cfg: DictConfig) -> dict:
         nonlocal best_metric, best_eval
         if eval_ds is None or not cfg.eval.every:
             return
-        rep = evaluate(model, eval_ds, batch_size=cfg.eval.batch_size)
+        rep = evaluate(model, eval_ds, batch_size=cfg.eval.batch_size, device=device)
         run.log({f"eval/{k}": v for k, v in rep.as_dict().items() if k != "n"}, step=step)
         log.info("eval @ %d | loss %.4f | tok_acc %.3f | em %.3f",
                  step, rep.loss, rep.token_acc, rep.exact_match)
