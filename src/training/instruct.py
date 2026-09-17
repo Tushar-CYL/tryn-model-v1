@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from common.checkpoint import load_checkpoint, save_checkpoint
+from common.checkpoint import load_partial, save_checkpoint
 from common.config import load_config
 from common.logging_utils import get_logger, setup_logging
 from common.lora import apply_lora, lora_parameters
@@ -47,8 +47,12 @@ def run_instruct(cfg: DictConfig) -> dict:
 
     model = build_model(cfg, vocab_size=tok.vocab_size).to(device)
     if cfg.get("init_from"):
-        load_checkpoint(cfg.init_from, model, map_location=str(device))
-        log.info("warm-started from %s", cfg.init_from)
+        info = load_partial(cfg.init_from, model, map_location=str(device))
+        log.info("warm-started from %s (%d/%d tensors matched; %d skipped)",
+                 cfg.init_from, info["loaded"], info["total"], info["skipped"])
+        if info["loaded"] == 0:
+            log.warning("no tensors matched — architectures differ; training from scratch. "
+                        "Warm-start needs an alignment checkpoint of the SAME config.")
 
     # Stage 3: freeze base, then attach LoRA (fresh trainable adapters) + connector.
     model.freeze_encoder_decoder()

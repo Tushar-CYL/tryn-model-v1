@@ -22,6 +22,23 @@ def load_checkpoint(path: str | Path, model: nn.Module, map_location: str = "cpu
     return payload
 
 
+def load_partial(path: str | Path, model: nn.Module, map_location: str = "cpu") -> dict:
+    """Warm-start: copy only the checkpoint tensors whose name AND shape match.
+
+    Safe across architecture changes (e.g. a differently-sized model) — mismatched
+    or missing tensors are skipped rather than raising. Returns
+    {loaded, skipped, total} counts.
+    """
+    payload = torch.load(path, map_location=map_location, weights_only=False)
+    src = payload.get("model_state", payload)
+    tgt = model.state_dict()
+    compatible = {k: v for k, v in src.items() if k in tgt and tgt[k].shape == v.shape}
+    tgt.update(compatible)
+    model.load_state_dict(tgt)
+    return {"loaded": len(compatible), "skipped": len(src) - len(compatible),
+            "total": len(tgt)}
+
+
 def save_training_state(
     path: str | Path,
     model: nn.Module,
