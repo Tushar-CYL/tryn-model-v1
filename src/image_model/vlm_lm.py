@@ -84,7 +84,7 @@ class LMImageVLM(nn.Module):
                        labels=full_labels).loss
 
     @torch.no_grad()
-    def generate_caption(self, images, max_new_tokens: int = 30,
+    def generate_caption(self, images, max_new_tokens: int = 30, min_new_tokens: int = 5,
                          repetition_penalty: float = 1.3, no_repeat_ngram_size: int = 3):
         """Greedy caption from vision tokens + a BOS prompt. Returns decoded strings."""
         self.eval()
@@ -98,6 +98,7 @@ class LMImageVLM(nn.Module):
             inputs_embeds=inputs_embeds,
             attention_mask=full_mask,
             max_new_tokens=max_new_tokens,
+            min_new_tokens=min(min_new_tokens, max_new_tokens),  # never exceed max
             do_sample=False,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,

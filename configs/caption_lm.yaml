@@ -18,12 +18,12 @@ encoder:
 
 connector:
   type: resampler
-  num_latents: 32        # vision-token budget prepended to the LM
+  num_latents: 64        # vision-token budget prepended to the LM (more = more detail)
   n_heads: 8
-  depth: 2
+  depth: 3
 
 lm:
-  model_name: HuggingFaceTB/SmolLM2-135M   # or -360M for stronger captions
+  model_name: HuggingFaceTB/SmolLM2-360M   # 360M gives noticeably better captions than 135M
   freeze_base: true
 
 lora:
@@ -34,24 +34,27 @@ lora:
 
 data:
   shards_dir: data/processed/coco_train
-  batch_size: 8
+  batch_size: 16
   max_len: 48
 
 optim:
-  lr: 2.0e-4
-  steps: 1500
+  lr: 2.0e-4             # LoRA learning rate
+  connector_lr: 1.0e-3  # connector trains faster than the LoRA adapters
+  connector_warmup: 400 # Stage-2: train connector alone, then enable LoRA (Stage-3)
+  steps: 6000
   weight_decay: 0.01
-  warmup: 100          # linear warmup steps, then cosine decay
+  warmup: 200           # linear LR warmup, then cosine decay
   grad_clip: 1.0
-  accum_steps: 1       # gradient accumulation (raise for a larger effective batch)
-  amp: fp16            # "fp16" (T4) | "bf16" (Ampere+) | "none"
+  accum_steps: 2        # effective batch = batch_size * accum_steps
+  amp: fp16             # "fp16" (T4) | "bf16" (Ampere+) | "none"
 
 eval:
-  every: 300
+  every: 500
   n_samples: 6
 
 checkpoint:
   dir: outputs/caption_lm
+  resume: null          # path to last.pt to resume (model + optimizer + step)
 
 tracking:
   backend: wandb
