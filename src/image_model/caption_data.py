@@ -13,21 +13,26 @@ import torch
 from PIL import Image
 
 
+def to_model_input(images_uint8: torch.Tensor) -> torch.Tensor:
+    """uint8 (N,3,H,W) in [0,255] -> float SigLIP input in [-1, 1]."""
+    return images_uint8.float() / 255.0 * 2.0 - 1.0
+
+
 def _load_images_and_captions(shards_dir, image_size, split, max_samples):
     from data_pipeline.shard import read_shards
 
     imgs, caps = [], []
     for rec in read_shards(Path(shards_dir) / split):
         im = rec.image.convert("RGB").resize((image_size, image_size), Image.BICUBIC)
-        t = torch.frombuffer(bytearray(im.tobytes()), dtype=torch.uint8).float() / 255.0
-        t = t.view(image_size, image_size, 3).permute(2, 0, 1).contiguous()
-        imgs.append(t * 2.0 - 1.0)          # SigLIP expects [-1, 1]
+        # Store as uint8 (4x less RAM than float); normalize per-batch at train time.
+        t = torch.frombuffer(bytearray(im.tobytes()), dtype=torch.uint8)
+        imgs.append(t.view(image_size, image_size, 3).permute(2, 0, 1).contiguous())
         caps.append(rec.caption)
         if max_samples is not None and len(imgs) >= max_samples:
             break
     if not imgs:
         raise FileNotFoundError(f"No records under {shards_dir}/{split}")
-    return torch.stack(imgs), caps
+    return torch.stack(imgs), caps          # uint8 (N,3,H,W)
 
 
 def load_caption_dataset(shards_dir, tokenizer, image_size=224, split="train",
@@ -63,7 +68,7 @@ def iter_caption_batches(ds, batch_size, shuffle=True, seed=0):
     for s in range(0, n, batch_size):
         idx = order[s:s + batch_size]
         yield {
-            "images": ds["images"][idx],
+            "images": to_model_input(ds["images"][idx]),   # uint8 -> float [-1,1]
             "input_ids": ds["input_ids"][idx],
             "attention_mask": ds["attention_mask"][idx],
             "labels": ds["labels"][idx],

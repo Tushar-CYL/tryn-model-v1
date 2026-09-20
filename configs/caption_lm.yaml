@@ -46,7 +46,8 @@ optim:
   warmup: 200           # linear LR warmup, then cosine decay
   grad_clip: 1.0
   accum_steps: 2        # effective batch = batch_size * accum_steps
-  amp: fp16             # "fp16" (T4) | "bf16" (Ampere+) | "none"
+  amp: none             # "none" = fp32 (stable). fp16 overflows SigLIP on T4 -> NaN.
+                        # Use "bf16" only on Ampere+ (A100/L4); leave "none" on T4.
 
 eval:
   every: 500

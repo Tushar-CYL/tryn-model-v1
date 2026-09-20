@@ -25,7 +25,7 @@ from common.optim import cosine_warmup
 from common.seed import resolve_device, set_seed
 from common.tracking import init_tracking
 from eval.caption_metrics import corpus_bleu4
-from image_model.caption_data import iter_caption_batches, load_caption_dataset
+from image_model.caption_data import iter_caption_batches, load_caption_dataset, to_model_input
 from image_model.vlm_lm import build_lm_vlm
 
 log = get_logger(__name__)
@@ -70,8 +70,12 @@ def _evaluate(model, ds, device, batch_size, n_samples):
         total += float(model.loss(batch["images"].to(device), batch["input_ids"].to(device),
                                   batch["attention_mask"].to(device), batch["labels"].to(device)))
         nb += 1
-    k = min(len(ds["captions"]), max(n_samples, 64))
-    gen = model.generate_caption(ds["images"][:k].to(device))
+    # BLEU over a capped subset, generated in small chunks to bound memory.
+    k = min(len(ds["captions"]), max(n_samples, 48))
+    gen = []
+    for s in range(0, k, 16):
+        imgs = to_model_input(ds["images"][s:s + 16]).to(device)
+        gen.extend(model.generate_caption(imgs))
     bleu = corpus_bleu4(gen, ds["captions"][:k])
     samples = [{"target": ds["captions"][i], "generated": gen[i]} for i in range(min(n_samples, k))]
     return {"loss": round(total / max(nb, 1), 4), "bleu4": bleu}, samples
@@ -86,9 +90,11 @@ def run_caption_lm(cfg: DictConfig) -> dict:
     model = build_lm_vlm(OmegaConf.to_container(cfg, resolve=True)).to(device)
     tok = model.tokenizer
     train_ds = load_caption_dataset(cfg.data.shards_dir, tok, image_size=cfg.image.image_size,
-                                    split="train", max_len=cfg.data.max_len)
+                                    split="train", max_len=cfg.data.max_len,
+                                    max_samples=cfg.data.get("max_train_samples"))
     val_ds = load_caption_dataset(cfg.data.shards_dir, tok, image_size=cfg.image.image_size,
-                                  split="val", max_len=cfg.data.max_len)
+                                  split="val", max_len=cfg.data.max_len,
+                                  max_samples=cfg.data.get("max_val_samples", 256))
 
     wd = cfg.optim.get("weight_decay", 0.01)
     connector_lr = cfg.optim.get("connector_lr", cfg.optim.lr * 5)
@@ -161,6 +167,12 @@ def run_caption_lm(cfg: DictConfig) -> dict:
         opt.zero_grad(set_to_none=True)
 
         last_loss = micro / accum
+        if not (last_loss == last_loss and abs(last_loss) != float("inf")):  # NaN/inf
+            raise RuntimeError(
+                f"Non-finite loss ({last_loss}) at step {step}. This is almost always "
+                f"fp16 overflow (SigLIP on T4) — set optim.amp: none (fp32). "
+                f"If it persists on fp32, lower optim.connector_lr / optim.lr."
+            )
         first_loss = first_loss if first_loss is not None else last_loss
         if step % 50 == 0:
             log.info("step %d | loss %.4f | lr %.2e | lora %s", step, last_loss,
